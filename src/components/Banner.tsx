@@ -33,21 +33,17 @@ export default function HeroBanner({ banners, startIndex = 0, fallbackImage }: {
     return () => clearInterval(timer);
   }, [banners.length]);
 
+  const defaultFallback = fallbackImage || "https://i.postimg.cc/vBv8bbQN/unnamed-8.jpg";
+
   if (banners.length === 0) {
     return (
       <div className="w-full aspect-[16/9] md:aspect-[21/9] bg-slate-100 rounded-3xl overflow-hidden relative">
-        {fallbackImage ? (
-          <img 
-            src={fallbackImage} 
-            alt="Loading Offers..." 
-            className="w-full h-full object-cover" 
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <div className="flex items-center justify-center h-full text-slate-400 font-medium">
-            Loading latest offers...
-          </div>
-        )}
+        <img 
+          src={defaultFallback} 
+          alt="Pbazar Special Offers" 
+          className="w-full h-full object-cover" 
+          referrerPolicy="no-referrer"
+        />
       </div>
     );
   }

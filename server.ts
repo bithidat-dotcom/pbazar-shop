@@ -39,6 +39,17 @@ async function startServer() {
 
   app.use(express.json());
 
+  // Universal Cross-Domain / Jail-Free CORS Middleware for any Official or Custom Domain
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    next();
+  });
+
   // API Routes
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok", message: "Pbazar Partner Server is live" });

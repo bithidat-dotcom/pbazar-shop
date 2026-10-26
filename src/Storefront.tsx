@@ -36,11 +36,30 @@ const parseFirestoreDateMs = (dateVal: any): number => {
   return isNaN(d) ? 0 : d;
 };
 
+const DEFAULT_BANNERS: Banner[] = [
+  {
+    id: 'banner_fashion',
+    title: 'Pbazar Fashion Collection',
+    image: 'https://i.postimg.cc/vBv8bbQN/unnamed-8.jpg',
+    created_at: '2026-01-01'
+  },
+  {
+    id: 'banner_seller',
+    title: 'Verified Seller Network',
+    image: 'https://i.postimg.cc/WbN1N7Z0/unnamed-15.jpg',
+    created_at: '2026-01-02'
+  }
+];
+
 export default function Storefront() {
   const navigate = useNavigate();
   const [products, setProducts] = useState<Product[]>([]);
   const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  const [banners, setBanners] = useState<Banner[]>([]);
+  const [banners, setBanners] = useState<Banner[]>(() => {
+    const cached = Storage.getLarge<Banner[]>('cached_banners') || Storage.getSmall<Banner[]>('cached_banners');
+    if (cached && Array.isArray(cached) && cached.length > 0) return cached;
+    return DEFAULT_BANNERS;
+  });
   const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   useEffect(() => {
@@ -244,7 +263,7 @@ export default function Storefront() {
     setError(null);
     
     // 1. Instant optimistic load from cache for 0ms loading time UX
-    const cachedProducts = Storage.getLarge<Product[]>('cached_products');
+    const cachedProducts = Storage.getLarge<Product[]>('cached_products') || Storage.getSmall<Product[]>('cached_products');
     if (cachedProducts && Array.isArray(cachedProducts) && cachedProducts.length > 0) {
       setProducts(cachedProducts);
       setSuperSaleProducts(cachedProducts.filter(p => p.is_super_sale));
@@ -253,21 +272,47 @@ export default function Storefront() {
     } else {
       setLoading(true);
     }
+
+    const cachedBanners = Storage.getLarge<Banner[]>('cached_banners') || Storage.getSmall<Banner[]>('cached_banners');
+    if (cachedBanners && Array.isArray(cachedBanners) && cachedBanners.length > 0) {
+      setBanners(cachedBanners);
+    }
     
     let unsubProd = () => {};
     let unsubBanner = () => {};
 
     const loadFallbacks = async () => {
+      // 1. Check local storage first
+      const savedProducts = Storage.getLarge<Product[]>('cached_products') || Storage.getSmall<Product[]>('cached_products');
+      if (savedProducts && Array.isArray(savedProducts) && savedProducts.length > 0) {
+        setProducts(savedProducts);
+        setSuperSaleProducts(savedProducts.filter(p => p.is_super_sale));
+        setRecommendedProducts(savedProducts.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8));
+      }
+      const savedBanners = Storage.getLarge<Banner[]>('cached_banners') || Storage.getSmall<Banner[]>('cached_banners');
+      if (savedBanners && Array.isArray(savedBanners) && savedBanners.length > 0) {
+        setBanners(savedBanners);
+      } else {
+        setBanners(DEFAULT_BANNERS);
+      }
+      const savedSellers = Storage.getLarge<Seller[]>('cached_sellers') || Storage.getSmall<Seller[]>('cached_sellers');
+      if (savedSellers && Array.isArray(savedSellers) && savedSellers.length > 0) {
+        setSellers(savedSellers);
+      }
+
+      // 2. Try Supabase live backup
       try {
         const backupProducts = await getBackupProducts();
         if (backupProducts && backupProducts.length > 0) {
           setProducts(backupProducts);
           setSuperSaleProducts(backupProducts.filter(p => p.is_super_sale));
           setRecommendedProducts(backupProducts.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8));
+          Storage.setLarge('cached_products', backupProducts);
         }
         const backupBanners = await getBackupBanners();
         if (backupBanners && backupBanners.length > 0) {
           setBanners(backupBanners);
+          Storage.setLarge('cached_banners', backupBanners);
         }
       } catch (err) {
         console.warn("Backup fetch failed:", err);
@@ -284,7 +329,7 @@ export default function Storefront() {
         if (!prodRes || !prodRes.ok) throw new Error('API server returned error state');
         const prodData = await prodRes.json();
         const loadedProds = prodData.products || [];
-        if (Array.isArray(loadedProds)) {
+        if (Array.isArray(loadedProds) && loadedProds.length > 0) {
           const normalized = loadedProds.map((p: any) => ({
             id: p.id || String(Math.random()),
             name: p.name || '',
@@ -311,13 +356,15 @@ export default function Storefront() {
             return !cat.includes('food') && !cat.includes('drink') && !cat.includes('cafe') && !cat.includes('snack') && !cat.includes('dessert');
           });
           
-          normalized.sort((a: Product, b: Product) => parseFirestoreDateMs(b.created_at) - parseFirestoreDateMs(a.created_at));
-          setProducts(normalized);
-          setSuperSaleProducts(normalized.filter(p => p.is_super_sale));
-          setRecommendedProducts(normalized.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8));
-          Storage.setLarge('cached_products', normalized);
-          setLoading(false);
-          return true;
+          if (normalized.length > 0) {
+            normalized.sort((a: Product, b: Product) => parseFirestoreDateMs(b.created_at) - parseFirestoreDateMs(a.created_at));
+            setProducts(normalized);
+            setSuperSaleProducts(normalized.filter(p => p.is_super_sale));
+            setRecommendedProducts(normalized.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8));
+            Storage.setLarge('cached_products', normalized);
+            setLoading(false);
+            return true;
+          }
         }
       } catch (err) {
         console.warn('API fetch failed, falling back to live Firestore:', err);
@@ -396,6 +443,16 @@ export default function Storefront() {
 
       // Always setup banners and sellers regardless of product API success
       try {
+        fetch('/api/banners')
+          .then(res => res.json())
+          .then(data => {
+            if (data.banners && Array.isArray(data.banners) && data.banners.length > 0) {
+              setBanners(data.banners);
+              Storage.setLarge('cached_banners', data.banners);
+            }
+          })
+          .catch(() => {});
+
         unsubBanner = onSnapshot(query(collection(db, 'banners')), (snapshot) => {
           const bannerData = snapshot.docs.map(doc => {
             const data = doc.data() || {};
@@ -945,8 +1002,7 @@ export default function Storefront() {
   const discountBtnImg = "https://i.postimg.cc/ZRr6ymvb/unnamed-(13).jpg";
   const bagBtnImg = "https://i.postimg.cc/h4LHK7jZ/unnamed-(14).jpg";
   const sellerBannerImg = "https://i.postimg.cc/WbN1N7Z0/unnamed-15.jpg"; // New seller banner placeholder
-  const officeBannerImg = "https://i.postimg.cc/vBv8bbQN/unnamed-8.jpg"; // Office banner
-  const fallbackBannerImg = "https://i.pinimg.com/1200x/73/cd/5a/73cd5ad2380a1a131f07f4b49793b111.jpg";
+  const fallbackBannerImg = "https://i.postimg.cc/vBv8bbQN/unnamed-8.jpg";
 
   return (
     <div className="min-h-screen bg-mesh">

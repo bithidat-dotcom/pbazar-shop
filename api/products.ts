@@ -1,18 +1,32 @@
-import type { IncomingMessage, ServerResponse } from 'http';
 import fs from 'fs';
 import path from 'path';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, query, doc, setDoc, deleteDoc } from 'firebase/firestore';
 
-// Helper for Vercel Serverless environment
 const TMP_CACHE = path.join('/tmp', 'products_cache.json');
 const BUNDLED_CACHE = path.join(process.cwd(), 'products_cache.json');
+
+let db: any = null;
+try {
+  const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  if (fs.existsSync(configPath)) {
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    const app = getApps().length > 0 ? getApp() : initializeApp(config);
+    db = getFirestore(app, config.firestoreDatabaseId || undefined);
+  }
+} catch (e) {
+  console.warn('Firebase init in api/products:', e);
+}
 
 function getCachedProducts(): any[] {
   try {
     if (fs.existsSync(TMP_CACHE)) {
-      return JSON.parse(fs.readFileSync(TMP_CACHE, 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(TMP_CACHE, 'utf-8'));
+      if (Array.isArray(data) && data.length > 0) return data;
     }
     if (fs.existsSync(BUNDLED_CACHE)) {
-      return JSON.parse(fs.readFileSync(BUNDLED_CACHE, 'utf-8'));
+      const data = JSON.parse(fs.readFileSync(BUNDLED_CACHE, 'utf-8'));
+      if (Array.isArray(data) && data.length > 0) return data;
     }
   } catch (e) {
     console.warn('Error reading product cache on Vercel:', e);
@@ -23,7 +37,6 @@ function getCachedProducts(): any[] {
 function saveCachedProducts(products: any[]) {
   try {
     fs.writeFileSync(TMP_CACHE, JSON.stringify(products, null, 2), 'utf-8');
-    // Also try writing to local if possible
     if (fs.existsSync(BUNDLED_CACHE)) {
       try {
         fs.writeFileSync(BUNDLED_CACHE, JSON.stringify(products, null, 2), 'utf-8');
@@ -35,7 +48,6 @@ function saveCachedProducts(products: any[]) {
 }
 
 export default async function handler(req: any, res: any) {
-  // Enable CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -47,7 +59,21 @@ export default async function handler(req: any, res: any) {
   const method = req.method;
 
   if (method === 'GET') {
-    const products = getCachedProducts();
+    let products = getCachedProducts();
+
+    // If cache is empty and Firestore is available, fetch live from Firestore
+    if (products.length === 0 && db) {
+      try {
+        const snap = await getDocs(query(collection(db, 'products')));
+        if (!snap.empty) {
+          products = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          saveCachedProducts(products);
+        }
+      } catch (err) {
+        console.warn('Firestore fetch in api/products failed:', err);
+      }
+    }
+
     return res.status(200).json({ products });
   }
 
@@ -61,6 +87,14 @@ export default async function handler(req: any, res: any) {
         created_at: productData.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
+
+      if (db) {
+        try {
+          await setDoc(doc(db, 'products', productId), payload, { merge: true });
+        } catch (dbErr) {
+          console.warn('Firestore write error in api/products:', dbErr);
+        }
+      }
 
       const currentList = getCachedProducts();
       const existingIdx = currentList.findIndex((p: any) => p.id === productId);
@@ -83,6 +117,14 @@ export default async function handler(req: any, res: any) {
       const id = req.query?.id || updateData.id;
       if (!id) return res.status(400).json({ error: 'Missing product ID' });
 
+      if (db) {
+        try {
+          await setDoc(doc(db, 'products', id), { ...updateData, updated_at: new Date().toISOString() }, { merge: true });
+        } catch (dbErr) {
+          console.warn('Firestore update error in api/products:', dbErr);
+        }
+      }
+
       const currentList = getCachedProducts();
       const existingIdx = currentList.findIndex((p: any) => p.id === id);
       if (existingIdx >= 0) {
@@ -100,6 +142,14 @@ export default async function handler(req: any, res: any) {
     try {
       const id = req.query?.id || req.body?.id;
       if (!id) return res.status(400).json({ error: 'Missing product ID' });
+
+      if (db) {
+        try {
+          await deleteDoc(doc(db, 'products', id));
+        } catch (dbErr) {
+          console.warn('Firestore delete error in api/products:', dbErr);
+        }
+      }
 
       const currentList = getCachedProducts();
       const filtered = currentList.filter((p: any) => p.id !== id);

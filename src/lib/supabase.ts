@@ -1,13 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL;
-const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = (import.meta as any).env.VITE_SUPABASE_URL || 'https://dcwtknghnuzgcvjspejb.supabase.co';
+const supabaseAnonKey = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjd3RrbmdobnV6Z2N2anNwZWpiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3MzA1NzgsImV4cCI6MjEwODMwNjU3OH0.WAPCjxpBflJNM1-LcuQalUysqmNMJrAhZ238MHKOdZI';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn("Supabase credentials missing from environment variables.");
-}
-
-export const supabase = createClient(supabaseUrl || '', supabaseAnonKey || '');
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export async function syncProductToSupabase(product: any) {
   if (!supabaseUrl || !supabaseAnonKey) return { success: false, error: 'Missing credentials' };
