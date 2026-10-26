@@ -378,10 +378,10 @@ export default function Storefront() {
     }
 
     const initData = async () => {
-      const success = await loadFromAPI();
+      await loadFromAPI();
       
-      // If API fetch fails, fallback to Firestore for products
-      if (!success) {
+      // Always setup live Firestore product listener for real-time database sync on any domain
+      if (!isFirestoreQuotaExceeded()) {
         try {
           unsubProd = onSnapshot(query(collection(db, 'products')), (snapshot) => {
             const prodData = snapshot.docs.map(doc => {
@@ -412,32 +412,31 @@ export default function Storefront() {
               const cat = (p.category || '').toLowerCase();
               return !cat.includes('food') && !cat.includes('drink') && !cat.includes('cafe') && !cat.includes('snack') && !cat.includes('dessert');
             });
-            prodData.sort((a,b) => parseFirestoreDateMs(b.created_at) - parseFirestoreDateMs(a.created_at));
-            setProducts(prodData);
             
-            const superSale = prodData.filter(p => p.is_super_sale);
-            setSuperSaleProducts(superSale);
+            if (prodData.length > 0) {
+              prodData.sort((a,b) => parseFirestoreDateMs(b.created_at) - parseFirestoreDateMs(a.created_at));
+              setProducts(prodData);
+              
+              const superSale = prodData.filter(p => p.is_super_sale);
+              setSuperSaleProducts(superSale);
 
-            const recommended = prodData.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8);
-            setRecommendedProducts(recommended);
+              const recommended = prodData.filter(p => (p.rating || 0) >= 4.8 || (p.order_count || 0) >= 5).slice(0, 8);
+              setRecommendedProducts(recommended);
 
-            Storage.setLarge('cached_products', prodData);
-            setLoading(false);
+              Storage.setLarge('cached_products', prodData);
+              setLoading(false);
+            }
           }, (error: any) => {
-            if (error.code === 'resource-exhausted' || error.message?.includes('quota') || error.message?.includes('Quota') || error.message?.includes('resource-exhausted')) {
+            if (error.code === 'resource-exhausted' || error.message?.includes('quota') || error.message?.includes('Quota')) {
               setFirestoreQuotaExceeded(true);
               try { unsubProd(); } catch (e) {}
-              try { unsubBanner(); } catch (e) {}
               loadFallbacks();
             } else {
-              console.warn('Server sync operational via backup cache');
-              setFirestoreQuotaExceeded(true);
-              loadFallbacks();
-              setLoading(false);
+              console.warn('Firestore snapshot notice:', error.message);
             }
           });
         } catch (err: any) {
-          console.error("Firestore onSnapshot setup error", err);
+          console.warn("Firestore onSnapshot setup warning:", err);
         }
       }
 
